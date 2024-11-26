@@ -159,20 +159,6 @@ function _GetNoteNameFromTruncatedPath {
     return $NoteTruncatedPath.replace("\", ".")
 }
 
-function _WriteNumberedListOfNoteNames {
-    param (
-        [Parameter(Mandatory, Position = 0)]
-        [string[]]$NoteNames
-    )
-
-    $max = [math]::Min($NoteNames.Length, 9)
-
-    foreach ($i in 1..$max) {
-        Write-Host -NoNewline "[$i] "
-        Write-Host -ForegroundColor Cyan $NoteNames[$i - 1]
-    }
-}
-
 function _WriteError {
     param (
         [Parameter(Mandatory, Position = 0)]
@@ -194,6 +180,147 @@ function _GetNotePathFormattedFromNoteNameWithExtension {
 
     return ($spaceToSlashName -replace "(.*)\\(.*)", '$1.$2')
 
+}
+
+function _WriteNumberedListOfNoteNames {
+    param (
+        [Parameter(Mandatory, Position = 0)]
+        [string[]]$NoteNames
+    )
+
+    $max = [math]::Min($NoteNames.Length, 9)
+
+    foreach ($i in 1..$max) {
+        Write-Host -NoNewline "[$i] "
+        Write-Host -ForegroundColor Cyan $NoteNames[$i - 1]
+    }
+}
+
+# TODO: IMPLEMENT ASSOCIATED CONTENT (e.g.- CONTENT MATCH) DISPLAYING
+function _DoMultiPageListExperience {
+    param (
+        [Parameter(Mandatory, Position=0)]
+        [PSObject[]]$Items, # Must have 'ChildItem' and 'NoteNameWithExtension' Properties
+
+        [string]$PageHeaderPrefix,
+
+        $ItemFilter = $null # TODO: IMPLEMENT FILTER FOR ITEMS IN LIST FOR ENUMERATION
+    )
+
+    # Simplist case: Nothing!
+    if ($Items.Length -eq 0) {
+        return;
+    }
+
+    # Simple case: only 1 page of results to show. Show it and return.
+    if ($Items.Length -le $script:NOTESLISTMAXENTRIES) {
+        $entriesToShow = $Items | Select-Object -ExpandProperty NoteNameWithExtension
+        _WriteNumberedListOfNoteNames $entriesToShow
+        return;
+    }
+
+    $numPages = -1 # -1 means we don't know yet
+    $numPagesDisplayString = "?"
+    if ($null -eq $ItemFilter) {
+        $numPages = [int][math]::Ceiling($Items.Length / $script:NOTESLISTMAXENTRIES)
+        $numPagesDisplayString = $numPages
+    }
+
+    $indexFirstItemCurrentPage = 0
+    $cachedHydratedEntries = @()
+
+    # First page of entries upfront
+    $pageEntries = $Items[0..($script:NOTESLISTMAXENTRIES - 1)] | Select-Object -ExpandProperty NoteNameWithExtension
+    $cachedHydratedEntries += $pageEntries
+
+    Write-Host -ForegroundColor Magenta "$PageHeaderPrefix (Page 1 of $numPagesDisplayString)"
+
+    _WriteNumberedListOfNoteNames $pageEntries
+    Write-Host ""
+    Write-Host -NoNewline "(N/n) Next page, (Esc/Backspace/Enter) Stop"
+
+    $hasNextPage = $true
+    $hasPrevPage = $false
+    while ($true) {
+        $key = [System.Console]::ReadKey($true).Key
+
+        switch ($key) {
+            {@([ConsoleKey]::Escape, [ConsoleKey]::Enter, [ConsoleKey]::Backspace) -contains $_} {
+                return;
+            }
+
+            'N' {
+                # Next list
+                if (!($hasNextPage)) {
+                    continue
+                }
+
+                $indexFirstItemCurrentPage += $script:NOTESLISTMAXENTRIES
+
+                $remainingItemsCount = $Items.Length - $indexFirstItemCurrentPage
+                $pageEndIndexAdd = [math]::Min($remainingItemsCount, 9)
+
+                $pageEntries = $Items[$indexFirstItemCurrentPage..($indexFirstItemCurrentPage + $pageEndIndexAdd - 1)] | 
+                    Select-Object -ExpandProperty NoteNameWithExtension
+
+                $cachedHydratedEntries += $pageEntries # TODO: HYDRATION
+
+                $currentPage = ($indexFirstItemCurrentPage / $script:NOTESLISTMAXENTRIES) + 1
+                $numPagesDisplayString = $numPagesDisplayString # TODO: ONLY SET IF ALL PAGES HYDRATED WITH FILTER PRESENT
+
+                Write-Host ""
+                Write-Host ""
+                Write-Host -ForegroundColor Magenta "$PageHeaderPrefix (Page $currentPage of $numPagesDisplayString)"
+
+                _WriteNumberedListOfNoteNames $pageEntries
+                Write-Host ""
+
+                $hasPrevPage = $true
+                if ($remainingItemsCount > $script:NOTESLISTMAXENTRIES) {
+                    $hasNextPage = $true
+                    Write-Host -NoNewline "(N/n) Next page, (P/p) Previous page, (Esc/Backspace/Enter) Stop"
+                } else {
+                    $hasNextPage = $false
+                    Write-Host -NoNewline "(P/p) Previous page, (Esc/Backspace/Enter) Stop"
+                }
+            }
+
+            'P' {
+                # Previous list
+                if (!($hasPrevPage)) {
+                    continue
+                }
+
+                $indexFirstItemCurrentPage -= $script:NOTESLISTMAXENTRIES
+
+                $pageEntries = $Items[$indexFirstItemCurrentPage..($indexFirstItemCurrentPage + $script:NOTESLISTMAXENTRIES - 1)] | 
+                    Select-Object -ExpandProperty NoteNameWithExtension
+
+                
+                $currentPage = ($indexFirstItemCurrentPage / $script:NOTESLISTMAXENTRIES) + 1
+
+                Write-Host ""
+                Write-Host ""
+                Write-Host -ForegroundColor Magenta "$PageHeaderPrefix (Page $currentPage of $numPagesDisplayString)"
+                
+                _WriteNumberedListOfNoteNames $pageEntries
+                Write-Host ""
+
+                $hasNextPage = $true
+                if ($indexFirstItemCurrentPage -eq 0) {
+                    $hasPrevPage = $false
+                    Write-Host -NoNewline "(N/n) Next page, (Esc/Backspace/Enter) Stop"
+                } else {
+                    $hasPrevPage = $true
+                    Write-Host -NoNewline "(N/n) Next page, (P/p) Previous page, (Esc/Backspace/Enter) Stop"
+                }
+            }
+
+            default {
+                continue
+            }
+        }
+    }
 }
 
 #======================
@@ -252,19 +379,25 @@ function Find-Note {
         [PSCustomObject]@{
             ChildItem = $_
             TruncatedPath = $truncatedPath
+            NoteNameWithExtension = "" # Delay calculation until we know we want to keep the object
         }
     }
 
     $matchesFound = $allNotes | Where-Object {$_.TruncatedPath -match $pathedPatternWithExtension -or $_.TruncatedPath -match $allPathedPattern}
 
-    if (!($NoPrintHeader)) {
-        Write-Host -ForegroundColor Magenta "-- Notes Find Result:"
+    # Hydrate the 'NoteNameWithExtension' fields
+    foreach ($x in $matchesFound) {
+        $x.NoteNameWithExtension = (_GetNoteNameFromTruncatedPath $x.TruncatedPath)
     }
 
     if ($matchesFound.Length -eq 1) {
+        if (!($NoPrintHeader)) {
+            Write-Host -ForegroundColor Magenta "-- Notes Find Result"
+        }
+
         $script:CachedNoteSelectionFiles = @($matchesFound[0])
         Write-Host -NoNewline "[1] "
-        Write-Host -ForegroundColor Cyan (_GetNoteNameFromTruncatedPath $matchesFound[0].TruncatedPath)
+        Write-Host -ForegroundColor Cyan $matchesFound[0].NoteNameWithExtension
     }
     elseif ($matchesFound.Length -gt 1) {
         if ($SortBy -in $script:ReversedOrderProperties) {
@@ -275,13 +408,7 @@ function Find-Note {
 
         $script:CachedNoteSelectionFiles = $matchesFound
 
-        $noteNames = @()
-        foreach ($m in $matchesFound)
-        {
-            $noteNames += (_GetNoteNameFromTruncatedPath $m.TruncatedPath)
-        }
-
-        _WriteNumberedListOfNoteNames $noteNames
+        _DoMultiPageListExperience $matchesFound -PageHeaderPrefix "-- Notes Find Result"
     }
     else {
         # No Match :(
@@ -475,6 +602,17 @@ function Open-Note {
 
     $selection = $script:CachedNoteSelectionFiles[[int]::Parse($key) - 1]
     Invoke-Expression "& $script:OPENNOTECOMMAND $($selection.ChildItem.FullName)"
+}
+
+function Search-Notes {
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string]$QueryString,
+
+        [string]$NoteNameFilter
+
+
+    )
 }
 
 # Main 'notes' function with dispatching for given $Command
