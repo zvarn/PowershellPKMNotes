@@ -347,10 +347,7 @@ function Find-Note {
 
         [string]$Type,
 
-        [string]$SortBy = "Name",
-        # [switch]$ReverseOrder,
-
-        [switch]$NoPrintHeader
+        [string]$SortBy = "Name"
     )
 
     # Validate parameters
@@ -370,19 +367,23 @@ function Find-Note {
     # Handle regex-specific characters
     $wildcardReplacedFindPattern = $FindPattern.replace("+", "\+")
 
-    $allNotes = (Get-ChildItem -Recurse -File $NOTESROOT)
-    if ($SortBy -in $script:ReversedOrderProperties) {
-        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
-    } else {
-        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+    if ($null -eq $allNotes) {
+        _WriteError "You have no notes!"
+        return;
     }
 
     if ($null -ne $extension) {
         $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
     }
-
     if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
         return;
+    }
+
+    if ($SortBy -in $script:ReversedOrderProperties) {
+        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
+    } else {
+        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
     }
 
     if ("" -eq $wildcardReplacedFindPattern) {
@@ -391,10 +392,11 @@ function Find-Note {
             Select-Object -ExpandProperty FullName |
             fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
         if ($null -ne $foundNote -and "" -ne $foundNote) {
-            $foundNote = ($foundNote | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+            $noteFile = Get-Item $foundNote
+            $script:CachedNoteSelectionFiles = @($noteFile)
 
             Write-Host -NoNewline "[1] "
-            Write-Host -ForegroundColor Cyan $foundNote
+            Write-Host -ForegroundColor Cyan $noteFile.Name
         }
     }
     else {
@@ -404,6 +406,7 @@ function Find-Note {
             # No match
         }
         elseif ($matchesFound.Length -eq 0) {
+            $script:CachedNoteSelectionFiles = @($matchesFound)
             Write-Host -NoNewline "[1] "
             Write-Host -ForegroundColor Cyan $matchesFound.Name
         }
@@ -415,10 +418,11 @@ function Find-Note {
                 Select-Object -ExpandProperty FullName |
                 fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
             if ($null -ne $foundNote -and "" -ne $foundNote) {
-                $foundNote = ($foundNote | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+                $noteFile = Get-Item $foundNote
+                $script:CachedNoteSelectionFiles = @($noteFile)
 
                 Write-Host -NoNewline "[1] "
-                Write-Host -ForegroundColor Cyan $foundNote
+                Write-Host -ForegroundColor Cyan $noteFile.Name
             }
         }
     }
@@ -478,60 +482,83 @@ function New-Note {
 
 function Remove-Note {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Position = 0)]
         [string]$NoteName,
 
         [string]$Type,
 
-        [string]$SortBy = "Name",
-        [switch]$ReverseOrder
+        [string]$SortBy = "Name"
     )
 
     # Validate parameters
-    if (!(_IsValidNoteName $NoteName)) {
-        _WriteError "Invalid note name: $NoteName"
-        return;
-    }
-
     if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
         _WriteError "Invalid note type: $Type"
         return;
     }
 
-    $noteFullPath = ""
+    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+    if ($null -eq $allNotes) {
+        _WriteError "You have no notes!"
+        return;
+    }
+
+    if ($null -ne $extension) {
+        $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
+    }
+    if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
+        return;
+    }
+
+    if ($SortBy -in $script:ReversedOrderProperties) {
+        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
+    } else {
+        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+    }
+
+    # Locate the note - fuzzy find if no exact note given from args
     $noteNameWithExtension = ""
-    if (_HasValidNoteTypeExtension $NoteName) {
-        $noteNameWithExtension = $NoteName
-        $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
-        $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
-    }
-    else {
-        if ($null -ne $Type -and "" -ne $TYPE) {
-            $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
-            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
-            $noteFullPath = "$script:NOTESROOT\$notePartialPath"
-        }
-    }
-
-    if (!(Test-Path $noteFullPath)) {
-        # Attempt to find close notes
-        Find-Note -NoPrintHeader -FindPattern "*$NoteName*" -Type "$Type" -SortBy $SortBy -ReverseOrder:$ReverseOrder
-        Write-Host ""
-
-        $selectionMax = $script:CachedNoteSelectionFiles.Length
-        Write-Host -NoNewline "Press 1-$selectionMax to select match. Press any other key to abort Delete."
-
-        $key = [System.Console]::ReadKey($true).KeyChar
-        if ($key -lt "1" -or $key -gt "$selectionMax") {
-            # User aborted
+    $noteFullPath = ""
+    if ($null -eq $NoteName -or "" -eq $NoteName) {
+        # Jump right into fuzzy find.
+        $noteFullPath = $allNotes |
+            Select-Object -ExpandProperty FullName |
+            fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
+        if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+            _WriteError "No note specified"
             return;
         }
 
-        # Put new line in now
-        Write-Host ""
+        $noteNameWithExtension = ($noteFullPath | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+    }
+    else {
+        if (_HasValidNoteTypeExtension $NoteName) {
+            $noteNameWithExtension = $NoteName
+            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
+            $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+        }
+        else {
+            if ($null -ne $Type -and "" -ne $Type) {
+                $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+                $noteFullPath = "$script:NOTESROOT\$notePartialPath"
+            } else {
+                # We don't have a complete note name, just setting up for fuzzy find.
+                $noteNameWithExtension = $NoteName
+            }
+        }
 
-        $selection = $script:CachedNoteSelectionFiles[[int]::Parse($key) - 1]
-        $noteFullPath = $selection.Fullname
+        if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
+            # Start fuzzy find to find note
+            $noteFullPath = $allNotes |
+                Select-Object -ExpandProperty FullName |
+                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+            if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+                _WriteError "No note specified"
+                return;
+            }
+    
+            $noteNameWithExtension = ($noteFullPath | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+        }
     }
 
     # Make sure the user is really Sure about this
@@ -554,9 +581,12 @@ function Remove-Note {
     Write-Host -ForegroundColor Green " deleted!"
     
     # Remove any potentially now empty directories
-    $emptyDirs = (Get-ChildItem -Recurse -Directory $script:NOTESROOT | Where-Object { $_.GetFileSystemInfos().Count -eq 0 })
-    foreach ($d in $emptyDirs) {
-        Remove-Item $d -Force -Recurse
+    # Sort by FullName length (longest to shortest) to work up the directory tree
+    $allDirs = (Get-ChildItem -Recurse -Directory $script:NOTESROOT | Sort-Object -Descending {$_.FullName.Length})
+    foreach ($d in $allDirs) {
+        if ($d.GetFileSystemInfos().Count -eq 0) {
+            Remove-Item $d
+        }
     }
 }
 
@@ -567,54 +597,77 @@ function Open-Note {
 
         [string]$Type,
 
-        [string]$SortBy = "LastAccessTime",
-        [switch]$ReverseOrder
+        [string]$SortBy = "LastAccessTime"
     )
 
     # Validate parameters
-    if (!(_IsValidNoteName $NoteName)) {
-        _WriteError "Invalid note name: $NoteName"
-        return;
-    }
-
     if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
         _WriteError "Invalid note type: $Type"
         return;
     }
 
+    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+    if ($null -eq $allNotes) {
+        _WriteError "You have no notes!"
+        return;
+    }
+
+    if ($null -ne $extension) {
+        $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
+    }
+    if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
+        return;
+    }
+
+    if ($SortBy -in $script:ReversedOrderProperties) {
+        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
+    } else {
+        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+    }
+
+    # Locate the note - fuzzy find if no exact note given from args
     $noteFullPath = ""
-    $noteNameWithExtension = ""
-    if (_HasValidNoteTypeExtension $NoteName) {
-        $noteNameWithExtension = $NoteName
-        $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
-        $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+    if ($null -eq $NoteName -or "" -eq $NoteName) {
+        # Jump right into fuzzy find.
+        $noteFullPath = $allNotes |
+            Select-Object -ExpandProperty FullName |
+            fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
+        if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+            _WriteError "No note specified"
+            return;
+        }
     }
-    elseif ("" -ne $Type) {
-        $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
-        $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
-        $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+    else {
+        $noteNameWithExtension = ""
+        if (_HasValidNoteTypeExtension $NoteName) {
+            $noteNameWithExtension = $NoteName
+            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
+            $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+        }
+        else {
+            if ($null -ne $Type -and "" -ne $Type) {
+                $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+                $noteFullPath = "$script:NOTESROOT\$notePartialPath"
+            } else {
+                # We don't have a complete note name, just setting up for fuzzy find.
+                $noteNameWithExtension = $NoteName
+            }
+        }
+
+        if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
+            # Start fuzzy find to find note
+            $noteFullPath = $allNotes |
+                Select-Object -ExpandProperty FullName |
+                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+            if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+                _WriteError "No note specified"
+                return;
+            }
+        }
     }
 
-    if ("" -ne $noteFullPath -and (Test-Path $noteFullPath)) {
-        Invoke-Expression "& $script:OPENNOTECOMMAND $noteFullPath"
-        return;
-    }
-
-    # Attempt to find close notes
-    Find-Note -NoPrintHeader -FindPattern "*$NoteName*" -Type "$Type" -SortBy $SortBy -ReverseOrder:$ReverseOrder
-    Write-Host ""
-
-    $selectionMax = $script:CachedNoteSelectionFiles.Length
-    Write-Host -NoNewline "Press 1-$selectionMax to select match. Press any other key to abort Open."
-
-    $key = [System.Console]::ReadKey($true).KeyChar
-    if ($key -lt "1" -or $key -gt "$selectionMax") {
-        # User aborted
-        return;
-    }
-
-    $selection = $script:CachedNoteSelectionFiles[[int]::Parse($key) - 1]
-    Invoke-Expression "& $script:OPENNOTECOMMAND $($selection.FullName)"
+    Invoke-Expression "& $script:OPENNOTECOMMAND $noteFullPath"
 }
 
 function Search-Notes {
@@ -634,8 +687,7 @@ function Invoke-Notes {
         [Parameter(Mandatory, Position = 0)]
         [string]$Command,
 
-        [string]$SortBy = "LastAccessTime",
-        [switch]$ReverseOrder
+        [string]$SortBy = "Name"
     )
 
     DynamicParam
@@ -644,7 +696,7 @@ function Invoke-Notes {
 
         if ($Command -eq "find") { # FindPattern required
             $parameterAttribute = [System.Management.Automation.ParameterAttribute]@{
-                Mandatory = $true
+                Mandatory = $false
                 Position = 1
             }
 
@@ -657,9 +709,9 @@ function Invoke-Notes {
             
             $paramDictionary.Add('FindPattern', $dynParam1)
         }
-        elseif ($Command -eq "create" -or $Command -eq "delete" -or $Command -eq "open") { # NoteName required
+        elseif ($Command -eq "create" -or $Command -eq "delete" -or $Command -eq "open") {
             $parameterAttribute = [System.Management.Automation.ParameterAttribute]@{
-                Mandatory = $true
+                Mandatory = $false
                 Position = 1
             }
 
@@ -694,10 +746,10 @@ function Invoke-Notes {
         switch ($Command) {
             "find" {
                 if ($null -ne $PSBoundParameters.Type) {
-                    (Find-Note -FindPattern $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Find-Note -FindPattern $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy)
                 }
                 else {
-                    (Find-Note $PSBoundParameters.FindPattern -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Find-Note $PSBoundParameters.FindPattern -SortBy $SortBy)
                 }
             }
 
@@ -712,19 +764,19 @@ function Invoke-Notes {
 
             "delete" {
                 if ($null -ne $PSBoundParameters.Type) {
-                    (Remove-Note -NoteName $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Remove-Note -NoteName $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy)
                 }
                 else {
-                    (Remove-Note $PSBoundParameters.NoteName -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Remove-Note $PSBoundParameters.NoteName -SortBy $SortBy)
                 }
             }
 
             "open" {
                 if ($null -ne $PSBoundParameters.Type) {
-                    (Open-Note -NoteName $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Open-Note -NoteName $PSBoundParameters.NoteName -Type $PSBoundParameters.Type -SortBy $SortBy)
                 }
                 else {
-                    (Open-Note $PSBoundParameters.NoteName -SortBy $SortBy -ReverseOrder:$ReverseOrder)
+                    (Open-Note $PSBoundParameters.NoteName -SortBy $SortBy)
                 }
             }
 
