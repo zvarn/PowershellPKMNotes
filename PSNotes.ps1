@@ -127,7 +127,6 @@ function _HasValidNoteTypeExtension {
 
 function _GetExtensionForValidNoteTypeName {
     param(
-        [ValidateScript({_IsValidNoteTypeName $_})]
         [string]$TypeName
     )
 
@@ -137,7 +136,7 @@ function _GetExtensionForValidNoteTypeName {
         }
     }
 
-    throw "Unexpected end of function!"
+    return $null;
 }
 
 # Return note path of everything after $NOTESROOT
@@ -343,13 +342,13 @@ Set-Alias -Name notes -Value Invoke-Notes
 
 function Find-Note {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Position = 0)]
         [string]$FindPattern,
 
         [string]$Type,
 
-        [string]$SortBy = "LastAccessTime",
-        [switch]$ReverseOrder,
+        [string]$SortBy = "Name",
+        # [switch]$ReverseOrder,
 
         [switch]$NoPrintHeader
     )
@@ -368,35 +367,60 @@ function Find-Note {
     # Sub in regex wildcards
     $wildcardReplacedFindPattern = $FindPattern.replace("*", "\S*")
 
+    # Handle regex-specific characters
+    $wildcardReplacedFindPattern = $FindPattern.replace("+", "\+")
+
     $allNotes = (Get-ChildItem -Recurse -File $NOTESROOT)
-
-    $matchesFound = $null
-    if ($null -ne $extension) {
-        $matchesFound = $allNotes | Where-Object {$_.Name -match $wildcardReplacedFindPattern -and $_.Extension -match $extension}
+    if ($SortBy -in $script:ReversedOrderProperties) {
+        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
     } else {
+        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+    }
+
+    if ($null -ne $extension) {
+        $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
+    }
+
+    if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
+        return;
+    }
+
+    if ("" -eq $wildcardReplacedFindPattern) {
+        # Jump straight to fuzzy search
+        $foundNote = $allNotes |
+            Select-Object -ExpandProperty FullName |
+            fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
+        if ($null -ne $foundNote -and "" -ne $foundNote) {
+            $foundNote = ($foundNote | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+
+            Write-Host -NoNewline "[1] "
+            Write-Host -ForegroundColor Cyan $foundNote
+        }
+    }
+    else {
         $matchesFound = $allNotes | Where-Object {$_.Name -match $wildcardReplacedFindPattern}
-    }
 
-    if ($null -eq $matchesFound) {
-        # No match
-    }
-    elseif ($matchesFound.Length -eq 0) { # 1 match
-        if (!($NoPrintHeader)) {
-            Write-Host -ForegroundColor Magenta "-- Notes Find Result"
+        if ($null -eq $matchesFound) {
+            # No match
         }
-
-        $script:CachedNoteSelectionFiles = @($matchesFound[0])
-        Write-Host -NoNewline "[1] "
-        Write-Host -ForegroundColor Cyan $matchesFound.Name
-    }
-    elseif ($matchesFound.Length -gt 1) {
-        if ($SortBy -in $script:ReversedOrderProperties) {
-            $matchesFound = $matchesFound | Sort-Object -Descending -Property {$_.$SortBy}
-        } else {
-            $matchesFound = $matchesFound | Sort-Object -Property {$_.$SortBy}
+        elseif ($matchesFound.Length -eq 0) {
+            Write-Host -NoNewline "[1] "
+            Write-Host -ForegroundColor Cyan $matchesFound.Name
         }
+        elseif ($matchesFound.Length -lt $script:NOTESLISTMAXENTRIES) {
+            _DoMultiPageListExperience $matchesFound
+        }
+        else {
+            $foundNote = $matchesFound | 
+                Select-Object -ExpandProperty FullName |
+                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
+            if ($null -ne $foundNote -and "" -ne $foundNote) {
+                $foundNote = ($foundNote | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
 
-        _DoMultiPageListExperience $matchesFound -PageHeaderPrefix "-- Notes Find Result"
+                Write-Host -NoNewline "[1] "
+                Write-Host -ForegroundColor Cyan $foundNote
+            }
+        }
     }
 }
 
@@ -459,7 +483,7 @@ function Remove-Note {
 
         [string]$Type,
 
-        [string]$SortBy = "LastAccessTime",
+        [string]$SortBy = "Name",
         [switch]$ReverseOrder
     )
 
