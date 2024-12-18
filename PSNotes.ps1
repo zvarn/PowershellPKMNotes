@@ -490,74 +490,100 @@ function Remove-Note {
         [string]$SortBy = "Name"
     )
 
-    # Validate parameters
-    if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
-        _WriteError "Invalid note type: $Type"
-        return;
-    }
-
-    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
-    if ($null -eq $allNotes) {
-        _WriteError "You have no notes!"
-        return;
-    }
-
-    if ($null -ne $extension) {
-        $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
-    }
-    if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
-        return;
-    }
-
-    if ($SortBy -in $script:ReversedOrderProperties) {
-        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
-    } else {
-        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
-    }
-
-    # Locate the note - fuzzy find if no exact note given from args
-    $noteNameWithExtension = ""
     $noteFullPath = ""
-    if ($null -eq $NoteName -or "" -eq $NoteName) {
-        # Jump right into fuzzy find.
-        $noteFullPath = $allNotes |
-            Select-Object -ExpandProperty FullName |
-            fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
-        if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
-            _WriteError "No note specified"
+    $noteNameWithExtension = ""
+
+    # Check for cached note selection
+    if ($NoteName.Length -gt 1 -and $NoteName[0] -eq '/') {
+        if ($null -eq $script:CachedNoteSelectionFiles -or 0 -eq $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Note cache currently does not exist!"
             return;
         }
 
-        $noteNameWithExtension = ($noteFullPath | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
-    }
-    else {
-        if (_HasValidNoteTypeExtension $NoteName) {
-            $noteNameWithExtension = $NoteName
-            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
-            $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
-        }
-        else {
-            if ($null -ne $Type -and "" -ne $Type) {
-                $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
-                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
-                $noteFullPath = "$script:NOTESROOT\$notePartialPath"
-            } else {
-                # We don't have a complete note name, just setting up for fuzzy find.
-                $noteNameWithExtension = $NoteName
-            }
+        $indexSelected = 0
+        try {
+            $indexSelected = ([int]$NoteName.Substring(1)) - 1
+        } catch {
+            _WriteError "Invalid note cache selection."
+            return;
         }
 
-        if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
-            # Start fuzzy find to find note
+        if ($indexSelected -lt 0 -or $indexSelected -ge $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Invalid note cache selection."
+            return;
+        }
+
+        $noteFullPath = $script:CachedNoteSelectionFiles[$indexSelected].FullName
+        $noteNameWithExtension = $script:CachedNoteSelectionFiles[$indexSelected].Name
+    }
+    else {
+        # Validate parameters
+        if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
+            _WriteError "Invalid note type: $Type"
+            return;
+        }
+
+        $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+        if ($null -eq $allNotes) {
+            _WriteError "You have no notes!"
+            return;
+        }
+
+        if ($null -ne $extension) {
+            $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
+        }
+        if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
+            return;
+        }
+
+        if ($SortBy -in $script:ReversedOrderProperties) {
+            $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
+        } else {
+            $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+        }
+
+        # Locate the note - fuzzy find if no exact note given from args
+        if ($null -eq $NoteName -or "" -eq $NoteName) {
+            # Jump right into fuzzy find.
             $noteFullPath = $allNotes |
                 Select-Object -ExpandProperty FullName |
-                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
             if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
                 _WriteError "No note specified"
                 return;
             }
-    
+
             $noteNameWithExtension = ($noteFullPath | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+        }
+        else {
+            if (_HasValidNoteTypeExtension $NoteName) {
+                $noteNameWithExtension = $NoteName
+                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
+                $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+            }
+            else {
+                if ($null -ne $Type -and "" -ne $Type) {
+                    $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+                    $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+                    $noteFullPath = "$script:NOTESROOT\$notePartialPath"
+                } else {
+                    # We don't have a complete note name, just setting up for fuzzy find.
+                    $noteNameWithExtension = $NoteName
+                }
+            }
+
+            if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
+                # Start fuzzy find to find note
+                $noteFullPath = $allNotes |
+                    Select-Object -ExpandProperty FullName |
+                    fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+                if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+                    _WriteError "No note specified"
+                    return;
+                }
+        
+                $noteNameWithExtension = ($noteFullPath | Select-String ".+\\(.+)$").Matches[0].Groups[1].Value
+            }
         }
     }
 
@@ -600,69 +626,94 @@ function Open-Note {
         [string]$SortBy = "LastAccessTime"
     )
 
-    # Validate parameters
-    if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
-        _WriteError "Invalid note type: $Type"
-        return;
-    }
-
-    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
-    if ($null -eq $allNotes) {
-        _WriteError "You have no notes!"
-        return;
-    }
-
-    if ($null -ne $extension) {
-        $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
-    }
-    if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
-        return;
-    }
-
-    if ($SortBy -in $script:ReversedOrderProperties) {
-        $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
-    } else {
-        $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
-    }
-
-    # Locate the note - fuzzy find if no exact note given from args
     $noteFullPath = ""
-    if ($null -eq $NoteName -or "" -eq $NoteName) {
-        # Jump right into fuzzy find.
-        $noteFullPath = $allNotes |
-            Select-Object -ExpandProperty FullName |
-            fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
-        if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
-            _WriteError "No note specified"
+
+    # Check for cached note selection
+    if ($NoteName.Length -gt 1 -and $NoteName[0] -eq '/') {
+        if ($null -eq $script:CachedNoteSelectionFiles -or 0 -eq $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Note cache currently does not exist!"
             return;
         }
-    }
-    else {
-        $noteNameWithExtension = ""
-        if (_HasValidNoteTypeExtension $NoteName) {
-            $noteNameWithExtension = $NoteName
-            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
-            $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
-        }
-        else {
-            if ($null -ne $Type -and "" -ne $Type) {
-                $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
-                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
-                $noteFullPath = "$script:NOTESROOT\$notePartialPath"
-            } else {
-                # We don't have a complete note name, just setting up for fuzzy find.
-                $noteNameWithExtension = $NoteName
-            }
+
+        $indexSelected = 0
+        try {
+            $indexSelected = ([int]$NoteName.Substring(1)) - 1
+        } catch {
+            _WriteError "Invalid note cache selection."
+            return;
         }
 
-        if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
-            # Start fuzzy find to find note
+        if ($indexSelected -lt 0 -or $indexSelected -ge $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Invalid note cache selection."
+            return;
+        }
+
+        $noteFullPath = $script:CachedNoteSelectionFiles[$indexSelected].FullName
+    }
+    else {
+        # Validate parameters
+        if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
+            _WriteError "Invalid note type: $Type"
+            return;
+        }
+
+        $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+        if ($null -eq $allNotes) {
+            _WriteError "You have no notes!"
+            return;
+        }
+
+        if ($null -ne $extension) {
+            $allNotes = $allNotes | Where-Object {$_.Extension -match $extension}
+        }
+        if ($null -eq $allNotes -or $allNotes.Length -eq 0) {
+            return;
+        }
+
+        if ($SortBy -in $script:ReversedOrderProperties) {
+            $allNotes = $allNotes | Sort-Object -Descending -Property {$_.$SortBy}
+        } else {
+            $allNotes = $allNotes | Sort-Object -Property {$_.$SortBy}
+        }
+
+        # Locate the note - fuzzy find if no exact note given from args
+        if ($null -eq $NoteName -or "" -eq $NoteName) {
+            # Jump right into fuzzy find.
             $noteFullPath = $allNotes |
                 Select-Object -ExpandProperty FullName |
-                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+                fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom'
             if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
                 _WriteError "No note specified"
                 return;
+            }
+        }
+        else {
+            $noteNameWithExtension = ""
+            if (_HasValidNoteTypeExtension $NoteName) {
+                $noteNameWithExtension = $NoteName
+                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NoteName)
+                $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
+            }
+            else {
+                if ($null -ne $Type -and "" -ne $Type) {
+                    $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+                    $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+                    $noteFullPath = "$script:NOTESROOT\$notePartialPath"
+                } else {
+                    # We don't have a complete note name, just setting up for fuzzy find.
+                    $noteNameWithExtension = $NoteName
+                }
+            }
+
+            if ("" -eq $noteFullPath -or !(Test-Path $noteFullPath)) {
+                # Start fuzzy find to find note
+                $noteFullPath = $allNotes |
+                    Select-Object -ExpandProperty FullName |
+                    fzf --delimiter "\" --with-nth=-1 --preview "bat --color=always --style=numbers --line-range=:500 {}" --preview-window 'up,60%,border-bottom' --query "$noteNameWithExtension"
+                if ($null -eq $noteFullPath -or "" -eq $noteFullPath) {
+                    _WriteError "No note specified"
+                    return;
+                }
             }
         }
     }
