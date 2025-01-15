@@ -48,6 +48,14 @@ $script:ReversedOrderProperties = @(
 $script:NotesRootRegexable = $script:NOTESROOT.replace("\", "\\")
 $script:CachedNoteSelectionFiles = @()
 
+#===================================
+#---- INITIALIZATION ----===============================================================================
+#===================================
+
+# Check for existence of notes root. Create it if it does not exist.
+if (-not (Test-Path $script:NOTESROOT)) {
+    New-Item -ItemType "Directory" $script:NOTESROOT
+}
 
 #====================================
 #---- PRIVATE UTILITY FUNCTIONS ----==============================================================================
@@ -137,25 +145,6 @@ function _GetExtensionForValidNoteTypeName {
     }
 
     return $null;
-}
-
-# Return note path of everything after $NOTESROOT
-function _GetNoteTruncatedPath {
-    param (
-        [Parameter(Mandatory, Position = 0)]
-        [string]$NoteFullPath
-    )
-
-    return ($NoteFullPath | sls "$script:NotesRootRegexable\\(.+)").Matches[0].Groups[1]
-}
-
-function _GetNoteNameFromTruncatedPath {
-    param (
-        [Parameter(Mandatory, Position = 0)]
-        [string]$NoteTruncatedPath
-    )
-
-    return $NoteTruncatedPath.replace("\", ".")
 }
 
 function _WriteError {
