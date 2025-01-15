@@ -723,7 +723,7 @@ function Rename-Note {
 
     $currentNoteFullPath = ""
 
-    if ($CurrentNoteName.Length -gt 1 -and $NoteName[0] -eq '/') {
+    if ($CurrentNoteName.Length -gt 1 -and $CurrentNoteName[0] -eq '/') {
         if ($null -eq $script:CachedNoteSelectionFiles -or 0 -eq $script:CachedNoteSelectionFiles.Length) {
             _WriteError "Note cache currently does not exist!"
             return;
@@ -731,14 +731,14 @@ function Rename-Note {
 
         $indexSelected = 0
         try {
-            $indexSelected = ([int]$NoteName.Substring(1)) - 1
+            $indexSelected = ([int]$CurrentNoteName.Substring(1)) - 1
         } catch {
-            _WriteError "Invalid note cache selection."
+            _WriteError "Invalid note cache selection 1."
             return;
         }
 
         if ($indexSelected -lt 0 -or $indexSelected -ge $script:CachedNoteSelectionFiles.Length) {
-            _WriteError "Invalid note cache selection."
+            _WriteError "Invalid note cache selection 2."
             return;
         }
 
@@ -764,6 +764,7 @@ function Rename-Note {
 
     if (-not (Test-Path $currentNoteFullPath)) {
         _WriteError "Current note specified does not exist!"
+        return;
     }
 
     $newNoteFullPath = ""
@@ -776,7 +777,16 @@ function Rename-Note {
         $newNoteFullPath = "$script:NOTESROOT\$notePartialPath" 
     }
 
-    Move-Item -Path $currentNoteFullPath -Destination $newNoteFullPath
+    # Create destination path, or fail if it already exists - user must do explicit delete of destination note if it
+    # already exists.
+    if (Test-Path $newNoteFullPath) {
+        _WriteError "Existing note with new note name already exists!"
+        return;
+    }
+
+    New-Item -Force -ItemType "File" $newNoteFullPath | Out-Null
+
+    Move-Item -Force -Path $currentNoteFullPath -Destination $newNoteFullPath
 }
 
 function Search-Notes {
