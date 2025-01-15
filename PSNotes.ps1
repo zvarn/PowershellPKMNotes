@@ -618,7 +618,7 @@ function Remove-Note {
 
 function Open-Note {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Position = 0)]
         [string]$NoteName,
 
         [string]$Type,
