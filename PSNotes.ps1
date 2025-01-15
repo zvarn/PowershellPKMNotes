@@ -63,7 +63,7 @@ if (-not (Test-Path $script:NOTESROOT)) {
 
 function _IsValidNoteTypeName {
     param (
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$TypeName
     )
 
@@ -79,7 +79,7 @@ function _IsValidNoteTypeName {
 # Defines rules for a valid note name
 function _IsValidNoteName {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$NoteName
     )
 
@@ -112,7 +112,7 @@ function _IsValidNoteName {
 
 function _HasValidNoteTypeExtension {
     param(
-        [Parameter(Mandatory, Position=0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$NoteName
     )
 
@@ -149,7 +149,7 @@ function _GetExtensionForValidNoteTypeName {
 
 function _WriteError {
     param (
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$ErrorString
     )
 
@@ -162,7 +162,7 @@ function _WriteError {
 function _GetNotePathFormattedFromNoteNameWithExtension {
     param (
         [ValidateScript({(_IsValidNoteName $_) -and (_HasValidNoteTypeExtension $_)})]
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$NoteNameWithExtension
     )
 
@@ -179,7 +179,7 @@ function _GetNotePathFormattedFromNoteNameWithExtension {
 
 function _WriteNumberedListOfNoteNames {
     param (
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string[]]$NoteNames
     )
 
@@ -194,7 +194,7 @@ function _WriteNumberedListOfNoteNames {
 # TODO: IMPLEMENT ASSOCIATED CONTENT (e.g.- CONTENT MATCH) DISPLAYING
 function _DoMultiPageListExperience {
     param (
-        [Parameter(Mandatory, Position=0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [PSObject[]]$Items,
 
         [string]$PageHeaderPrefix,
@@ -331,7 +331,7 @@ Set-Alias -Name notes -Value Invoke-Notes
 
 function Find-Note {
     param(
-        [Parameter(Position = 0)]
+        [Parameter(Position=0)]
         [string]$FindPattern,
 
         [string]$Type,
@@ -419,7 +419,7 @@ function Find-Note {
 
 function New-Note {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$NoteName,
 
         [string]$Type
@@ -461,7 +461,7 @@ function New-Note {
         return;
     }
 
-    New-Item $noteFullPath -Type File -Force | Out-Null
+    New-Item $noteFullPath -Type File | Out-Null
     Write-Host -NoNewline -ForegroundColor Green "Note "
     Write-Host -NoNewline -ForegroundColor Cyan "$noteNameWithExtension"
     Write-Host -ForegroundColor Green " created!"
@@ -471,7 +471,7 @@ function New-Note {
 
 function Remove-Note {
     param(
-        [Parameter(Position = 0)]
+        [Parameter(Position=0)]
         [string]$NoteName,
 
         [string]$Type,
@@ -551,7 +551,7 @@ function Remove-Note {
                 $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
             }
             else {
-                if ($null -ne $Type -and "" -ne $Type) {
+                if ("" -ne $Type) {
                     $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
                     $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
                     $noteFullPath = "$script:NOTESROOT\$notePartialPath"
@@ -607,7 +607,7 @@ function Remove-Note {
 
 function Open-Note {
     param(
-        [Parameter(Position = 0)]
+        [Parameter(Position=0)]
         [string]$NoteName,
 
         [string]$Type,
@@ -684,7 +684,7 @@ function Open-Note {
                 $noteFullPath = "$script:NOTESROOT\$notePartialPath" 
             }
             else {
-                if ($null -ne $Type -and "" -ne $Type) {
+                if ("" -ne $Type) {
                     $noteNameWithExtension = "$NoteName.$(_GetExtensionForValidNoteTypeName $Type)"
                     $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
                     $noteFullPath = "$script:NOTESROOT\$notePartialPath"
@@ -710,21 +710,89 @@ function Open-Note {
     Invoke-Expression "& $script:OPENNOTECOMMAND $noteFullPath"
 }
 
+function Rename-Note {
+    param(
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$CurrentNoteName,
+
+        [Parameter(Mandatory=$true, Position=1)]
+        [string]$NewNoteName,
+
+        [string]$Type
+    )
+
+    $currentNoteFullPath = ""
+
+    if ($CurrentNoteName.Length -gt 1 -and $NoteName[0] -eq '/') {
+        if ($null -eq $script:CachedNoteSelectionFiles -or 0 -eq $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Note cache currently does not exist!"
+            return;
+        }
+
+        $indexSelected = 0
+        try {
+            $indexSelected = ([int]$NoteName.Substring(1)) - 1
+        } catch {
+            _WriteError "Invalid note cache selection."
+            return;
+        }
+
+        if ($indexSelected -lt 0 -or $indexSelected -ge $script:CachedNoteSelectionFiles.Length) {
+            _WriteError "Invalid note cache selection."
+            return;
+        }
+
+        $currentNoteFullPath = $script:CachedNoteSelectionFiles[$indexSelected].FullName
+    } else {
+        if ("" -ne $Type -and !(_IsValidNoteTypeName $Type)) {
+            _WriteError "Invalid note type: $Type"
+            return;
+        }
+
+        if (_HasValidNoteTypeExtension $CurrentNoteName) {
+            $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $CurrentNoteName)
+            $currentNoteFullPath = "$script:NOTESROOT\$notePartialPath" 
+        }
+        else {
+            if ("" -ne $Type) {
+                $noteNameWithExtension = "$CurrentNoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+                $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+                $CurrentNoteName = "$script:NOTESROOT\$notePartialPath"
+            }
+        }
+    }
+
+    if (-not (Test-Path $currentNoteFullPath)) {
+        _WriteError "Current note specified does not exist!"
+    }
+
+    $newNoteFullPath = ""
+    if (-not (_HasValidNoteTypeExtension $NewNoteName)) {
+        $noteNameWithExtension = "$NewNoteName.$(_GetExtensionForValidNoteTypeName $Type)"
+        $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $noteNameWithExtension)
+        $newNoteFullPath = "$script:NOTESROOT\$notePartialPath" 
+    } else {
+        $notePartialPath = (_GetNotePathFormattedFromNoteNameWithExtension $NewNoteName)
+        $newNoteFullPath = "$script:NOTESROOT\$notePartialPath" 
+    }
+
+    Move-Item -Path $currentNoteFullPath -Destination $newNoteFullPath
+}
+
 function Search-Notes {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$QueryString,
 
+        [Parameter(Position=1)]
         [string]$NoteNameFilter
-
-
     )
 }
 
 # Main 'notes' function with dispatching for given $Command
 function Invoke-Notes {
     param(
-        [Parameter(Mandatory, Position = 0)]
+        [Parameter(Mandatory=$true, Position=0)]
         [string]$Command,
 
         [string]$SortBy = "Name"
