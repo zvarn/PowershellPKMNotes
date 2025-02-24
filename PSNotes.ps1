@@ -790,13 +790,45 @@ function Rename-Note {
 }
 
 function Search-Notes {
-    param(
-        [Parameter(Mandatory=$true, Position=0)]
-        [string]$QueryString,
+    $RgPrefix="rg --column --line-number --no-heading --color=always --smart-case "
 
-        [Parameter(Position=1)]
-        [string]$NoteNameFilter
-    )
+    $allNotes = (Get-ChildItem -Recurse -File $script:NOTESROOT)
+    if ($null -eq $allNotes) {
+        _WriteError "You have no notes!"
+        return;
+    }
+
+    # Remove old query cache files
+    if (Test-Path $USERGLOBALTEMP\notes-search-f) {
+        Remove-Item -Force $USERGLOBALTEMP\notes-search-f
+    }
+    if (Test-Path $USERGLOBALTEMP\notes-search-r) {
+        Remove-Item -Force $USERGLOBALTEMP\notes-search-r
+    }
+
+    $fzfResult = fzf --ansi --disabled --with-nth=-1 `
+        --bind "start:reload($RgPrefix `"`" `"$script:NOTESROOT`")+unbind(ctrl-r)" `
+        --bind "change:reload:powershell -Command `"Start-Sleep -Milliseconds 100`"; $RgPrefix {q} '$script:NOTESROOT'" `
+        --bind "ctrl-f:unbind(change,ctrl-f)+change-prompt(2. fzf> )+enable-search+rebind(ctrl-r)+execute(echo {q} > $USERGLOBALTEMP\notes-search-r)+transform-query:powershell -Command `"(Get-Content $USERGLOBALTEMP\notes-search-f) -replace('^^\`"', '') -replace(' $', '')`"" `
+        --bind "ctrl-r:unbind(ctrl-r)+change-prompt(1. rg> )+disable-search+reload($RgPrefix {q} `"$script:NOTESROOT`")+rebind(change,ctrl-f)+execute-silent(powershell -Command `"Set-Content $USERGLOBALTEMP\notes-search-f {q}`")+transform-query:powershell -Command `"(Get-Content $USERGLOBALTEMP\notes-search-r) -replace('\`"', '') -replace(' ', '')`"" `
+        --color "hl:-1:underline,hl+:-1:underline:reverse" `
+        --prompt '1. rg> ' `
+        --delimiter "\" `
+        --header '-- CTRL-R (rg mode), CTRL-F (fzf mode)' `
+        --preview "powershell -Command `"`$splitStr = '{}' -split ':'; bat --color=always (`$splitStr[0][1] + ':' + `$splitStr[1]) --highlight-line `$splitStr[2]`"" `
+        --preview-window 'up,60%,border-bottom,+{3}+3/3,~3'
+
+    if ($null -ne $fzfResult -and "" -ne $fzfResult) {
+        # Because the items in fzf were formatted with more than just the file name, we need to truncate it
+        $matchGroups = $fzfResult | Select-String "(.+?):[0-9]+:[0-9]+:" | Select-Object -ExpandProperty Matches | Select-Object -ExpandProperty Groups
+        $fileTarget = $matchGroups[1].Value
+
+        $noteFile = Get-Item $fileTarget
+        $script:CachedNoteSelectionFiles = @($noteFile)
+
+        Write-Host -NoNewline "[1] "
+        Write-Host -ForegroundColor Cyan $noteFile.Name
+    }
 }
 
 # Main 'notes' function with dispatching for given $Command
